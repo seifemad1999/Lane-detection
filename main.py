@@ -8,7 +8,9 @@ import glob
 
 
 
-
+def hist(img):
+    bottom_half = img[img.shape[0]//2:,:]
+    return np.sum(bottom_half, axis=0)
 
 class LaneLines:
     def _init_(self):
@@ -302,11 +304,16 @@ class CameraCalibration():
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
         return cv2.undistort(img, self.mtx, self.dist, None, self.mtx)
 
+def threshold_rel(img, lo, hi):
+    vmin = np.min(img)
+    vmax = np.max(img)
+    
+    vlo = vmin + (vmax - vmin) * lo
+    vhi = vmin + (vmax - vmin) * hi
+    return np.uint8((img >= vlo) & (img <= vhi)) * 255
 
-
-
-
-
+def threshold_abs(img, lo, hi):
+    return np.uint8((img >= lo) & (img <= hi)) * 255
 
 class Thresholding:
     """ This class is for extracting relevant pixels in an image.
@@ -389,3 +396,88 @@ class PerspectiveTransformation:
             Image (np.array): Front view image
         """
         return cv2.warpPerspective(img, self.M_inv, img_size, flags=flags)
+
+class FindLaneLines:
+    """ This class is for parameter tunning.
+
+    Attributes:
+        ...
+    """
+    def __init__(self):
+        """ Init Application"""
+        self.calibration = CameraCalibration('camera_cal', 9, 6)
+        self.thresholding = Thresholding()
+        self.transform = PerspectiveTransformation()
+        self.lanelines = LaneLines()
+
+    def forward(self, img):
+        out_img = np.copy(img)
+        img_concat = np.zeros(img.shape, np.uint8)
+        height= np.int(img.shape[0])
+        width= np.int(img.shape[1])
+        img = self.calibration.undistort(img)
+        img = self.transform.forward(img)
+        smaller_frame = cv2.resize(img, (0, 0), fx=0.25, fy=0.25) #resize the frame to be able to fit 4 ,width by half and length by half
+        img = self.thresholding.forward(img)
+        img3=cv2.cvtColor(img,cv2.COLOR_GRAY2RGB)
+        smaller_frame2 = cv2.resize(img3, (0, 0), fx=0.25, fy=0.25) #resize the frame to be able to fit 4 ,width by half and length by half
+        img = self.lanelines.forward(img)
+        smaller_frame3 = cv2.resize(img, (0, 0), fx=0.25, fy=0.25) #resize the frame to be able to fit 4 ,width by half and length by half
+        img = self.transform.backward(img)
+        out_img = cv2.addWeighted(out_img, 1, img, 0.6, 0)
+        bigger_frame = cv2.resize(out_img, (0, 0), fx=1, fy=1)   #resize the frame to be able to fit 4 ,width by half and length by half
+        img_concat[:int(1*height),:int(1*width)] = bigger_frame    #main frame
+        img_concat[:int(0.25*height), 20:20+int(0.25*width)] = smaller_frame  #top left
+        img_concat[:int(0.25*height),40+int(0.25*width):40+int(0.5*width)] = smaller_frame2 
+        img_concat[:int(0.25*height),60+int(0.5*width):60+int(0.75*width)] = smaller_frame3
+        img_concat = self.lanelines.plot(img_concat)
+        return img_concat
+
+    def forward_not_conc(self,img):
+        out_img = np.copy(img)
+        img_concat = np.zeros(img.shape, np.uint8)
+        height= np.int(img.shape[0])
+        width= np.int(img.shape[1])
+        img = self.calibration.undistort(img)
+        img = self.transform.forward(img)
+        img = self.thresholding.forward(img)
+        img3=cv2.cvtColor(img,cv2.COLOR_GRAY2RGB)
+        img = self.lanelines.forward(img)
+        img = self.transform.backward(img)
+        out_img = cv2.addWeighted(out_img, 1, img, 0.6, 0)
+        return out_img
+        
+
+    def process_image(self, input_path, output_path,flag):
+        img = cv2.imread(input_path)
+        img = cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
+        if(flag):
+            out_img = self.forward(img)
+        else:
+            out_img = self.forward_not_conc(img)
+        out_img = cv2.cvtColor(out_img,cv2.COLOR_BGR2RGB)
+        cv2.imwrite(output_path, out_img)
+
+    def process_video(self, input_path, output_path,flag):
+        clip = VideoFileClip(input_path)
+        if(flag == '1'):
+            out_clip = clip.fl_image(self.forward)
+        else:
+            out_clip = clip.fl_image(self.forward_not_conc)
+        out_clip.write_videofile(output_path, audio=False)
+
+def main():
+    findLaneLines = FindLaneLines()
+    flag_video_img = str(sys.argv[1])
+    flag_conc = str(sys.argv[2])
+    input_ = str(sys.argv[3])
+    output_ = str(sys.argv[4])
+    if(flag_video_img == '1'):
+        findLaneLines.process_video(input_, output_,flag_conc)
+    else:
+        findLaneLines.process_image(input_,output_,flag_conc)
+       
+
+
+#if _name_ == "_main_":
+main()
